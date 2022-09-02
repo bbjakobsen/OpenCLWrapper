@@ -311,7 +311,7 @@ public:
 	}
 	inline void delete_host_buffer() {
 		host_buffer_exists = false;
-		delete[] host_buffer;
+		//delete[] host_buffer;
 		if(!device_buffer_exists) {
 			N = 0ull;
 			d = 1u;
