@@ -1,6 +1,8 @@
 #pragma once
 
 #define WORKGROUP_SIZE 64 // needs to be 64 to fully use AMD GPUs
+#define WORKGROUP_SIZE_X 32
+#define WORKGROUP_SIZE_Y 16
 //#define PTX
 //#define LOG
 //#define USE_OPENCL_1_1
@@ -139,7 +141,9 @@ private:
 	cl::CommandQueue cl_queue;
 	bool exists = false;
 	inline string enable_device_capabilities() const { return // enable FP64/FP16 capabilities if available
-		"\n	#define def_workgroup_size "+to_string(WORKGROUP_SIZE)+"u"
+		"\n	#ifdef cl_khr_byte_addressable_store"
+		"\n	#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable"
+		"\n	#endif"
 		"\n	#ifdef cl_khr_fp64"
 		"\n	#pragma OPENCL EXTENSION cl_khr_fp64 : enable" // make sure cl_khr_fp64 extension is enabled
 		"\n	#endif"
@@ -155,7 +159,7 @@ public:
 	inline Device(const Device_Info& info, const string& opencl_c_code=get_opencl_c_code()) {
 		this->info = info;
 		cl_context = cl::Context(info.cl_device);
-		cl_queue = cl::CommandQueue(cl_context, info.cl_device); // queue to push commands for the device
+		cl_queue = cl::CommandQueue(cl_context, info.cl_device, CL_QUEUE_PROFILING_ENABLE); // queue to push commands for the device
 		cl::Program::Sources cl_source;
 		const string kernel_code = enable_device_capabilities()+"\n"+opencl_c_code;
 		cl_source.push_back({ kernel_code.c_str(), kernel_code.length() });
@@ -474,6 +478,7 @@ private:
 	cl::Kernel cl_kernel;
 	cl::NDRange cl_range_global, cl_range_local;
 	cl::CommandQueue cl_queue;
+	string kernel_name;
 	template<typename T> inline void link_parameter(const uint position, const Memory<T>& memory) {
 		cl_kernel.setArg(position, memory.get_cl_buffer());
 	}
@@ -491,10 +496,15 @@ private:
 		cl_range_global = cl::NDRange(((N+workgroup_size-1ull)/workgroup_size)*workgroup_size); // make global range a multiple of local range
 		cl_range_local = cl::NDRange(workgroup_size);
 	}
+	inline void initialize_ranges_2D(const ulong Nx, const ulong Ny, const ulong wg_size_x = (ulong)WORKGROUP_SIZE_X, const ulong wg_size_y = (ulong)WORKGROUP_SIZE_X) {
+		cl_range_global = cl::NDRange(((Nx + wg_size_x - 1ull) / wg_size_x) * wg_size_x, ((Ny + wg_size_y - 1ull) / wg_size_y) * wg_size_y); // make global range a multiple of local range
+		cl_range_local = cl::NDRange(wg_size_x, wg_size_y);
+	}
 public:
 	template<class... T> inline Kernel(const Device& device, const ulong N, const string& name, const T&... parameters) { // accepts Memory<T> objects and fundamental data type constants
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
 		cl_kernel = cl::Kernel(device.get_cl_program(), name.c_str());
+		kernel_name = name;
 		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
 		initialize_ranges(N);
 		cl_queue = device.get_cl_queue();
@@ -502,8 +512,17 @@ public:
 	template<class... T> inline Kernel(const Device& device, const ulong N, const uint workgroup_size, const string& name, const T&... parameters) { // accepts Memory<T> objects and fundamental data type constants
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
 		cl_kernel = cl::Kernel(device.get_cl_program(), name.c_str());
+		kernel_name = name;
 		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
 		initialize_ranges(N, (ulong)workgroup_size);
+		cl_queue = device.get_cl_queue();
+	}
+	template<class... T> inline Kernel(const Device& device, const ulong Nx, const ulong Ny, const ulong wg_size_x, const ulong wg_size_y, const string& name, const T&... parameters) { // accepts Memory<T> objects and fundamental data type constants
+		if (!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
+		cl_kernel = cl::Kernel(device.get_cl_program(), name.c_str());
+		kernel_name = name;
+		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
+		initialize_ranges_2D(Nx, Ny, wg_size_x, wg_size_y);
 		cl_queue = device.get_cl_queue();
 	}
 	inline Kernel() {} // default constructor
@@ -519,10 +538,26 @@ public:
 		return *this;
 	}
 	inline Kernel& run(const uint t=1u) {
+		int res;
+		cl::Event ev;
 		for(uint i=0u; i<t; i++) {
-			cl_queue.enqueueNDRangeKernel(cl_kernel, cl::NullRange, cl_range_global, cl_range_local);
+			res = cl_queue.enqueueNDRangeKernel(cl_kernel, cl::NullRange, cl_range_global, cl_range_local, nullptr, &ev);
+			if (res != CL_SUCCESS)
+				print_error("enqueueNDRangeKernel returned error");
 		}
-		cl_queue.finish();
+		res = cl_queue.finish();
+		if (res != CL_SUCCESS)
+			print_error("finish after enqueueNDRangeKernel returned error");
+
+		cl_ulong time_start;
+		cl_ulong time_end;
+
+		ev.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_START, &time_start);
+		ev.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_END, &time_end);
+		
+		double nanoSeconds = time_end - time_start;
+		printf("OpenCl Execution time (%s): %0.3f milliseconds \n", kernel_name.c_str(), nanoSeconds / 1000000.0);
+
 		return *this;
 	}
 	inline Kernel& operator()(const uint t=1u) {
