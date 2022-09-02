@@ -262,7 +262,7 @@ public:
 		this->host_buffer = host_buffer;
 		initialize_auxiliary_pointers();
 		host_buffer_exists = true;
-		write_to_device();
+		//write_to_device();
 	}
 	inline Memory() {} // default constructor
 	inline ~Memory() {
