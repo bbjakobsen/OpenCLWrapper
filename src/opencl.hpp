@@ -257,7 +257,7 @@ public:
 		}
 		write_to_device();
 	}
-	inline Memory(Device& device, const ulong N, const uint dimensions, T* const host_buffer, const bool allocate_device=true) {
+	inline Memory(Device& device, const ulong N, const uint dimensions, T* const host_buffer, const bool allocate_device=true, const bool write_to_device_=false) {
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
 		if(N*(ulong)dimensions==0ull) print_error("Memory size must be larger than 0.");
 		this->N = N;
@@ -267,7 +267,8 @@ public:
 		initialize_auxiliary_pointers();
 		host_buffer_exists = true;
 		external_host_buffer = true;
-		write_to_device();
+		if (write_to_device_)
+			write_to_device();
 	}
 	inline Memory() {} // default constructor
 	inline ~Memory() {
