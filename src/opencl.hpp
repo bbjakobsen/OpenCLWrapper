@@ -165,7 +165,7 @@ public:
 		cl_source.push_back({ kernel_code.c_str(), kernel_code.length() });
 		cl_program = cl::Program(cl_context, cl_source);
 #ifndef LOG
-		int error = cl_program.build("-cl-fast-relaxed-math -w"); // compile OpenCL C code, disable warnings
+		int error = cl_program.build("-cl-std=CL1.2 -Werror"); // compile OpenCL C code using ver 1.2 def of language, treat warnings as errors
 		if(error) print_warning(cl_program.getBuildInfo<CL_PROGRAM_BUILD_LOG>(info.cl_device)); // print build log
 #else // LOG, generate logfile for OpenCL code compilation
 		int error = cl_program.build("-cl-fast-relaxed-math"); // compile OpenCL C code
