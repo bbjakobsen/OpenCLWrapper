@@ -16,6 +16,7 @@
 #include <CL/cl.hpp> // OpenCL 1.0, 1.1, 1.2
 #include "utilities.hpp"
 
+namespace OpenCLWrapper {
 struct Device_Info {
 	cl::Device cl_device;
 	string name, vendor; // device name, vendor
@@ -568,3 +569,4 @@ public:
 		return run(t);
 	}
 };
+}
