@@ -9,6 +9,9 @@
 #pragma warning(disable:6386)
 #include <cmath>
 #include <vector>
+#include <utility>
+#include <queue>
+#include <memory>
 #ifdef UTILITIES_REGEX
 #include <regex> // contains <string>, <vector>, <algorithm> and others
 #else // UTILITIES_REGEX

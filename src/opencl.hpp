@@ -135,12 +135,84 @@ inline Device_Info select_device_with_id(const uint id, const vector<Device_Info
 	}
 }
 
+class CQueue
+{
+public:
+	CQueue() {}
+	CQueue(const cl::Context & cl_context, const cl::Device & cl_device)
+	{
+		cl_queue = cl::CommandQueue(cl_context, cl_device, CL_QUEUE_PROFILING_ENABLE); // queue to push commands for the device
+	}
+	
+	cl::Event* create_event(string n)
+	{
+		events.push(std::make_pair(n, cl::Event()));
+		cl::Event* ev = &(events.back().second);
+		return ev;
+	}
+
+	inline void finish_queue(bool log_timings=true) {
+		cl_queue.finish();
+		if (log_timings)
+		{
+			cl_ulong t0 = 0;
+			float totalMs = 0.0f;
+			printf("%34s : %7s %7s %7s %7s %7s ms\n", "Job name ", "queued", "submit", "start", "end", "run");
+
+			while (!events.empty())
+			{
+				auto p = events.front();
+
+				cl_ulong time_queued;
+				cl_ulong time_submit;
+				cl_ulong time_start;
+				cl_ulong time_end;
+
+				p.second.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_QUEUED, &time_queued);
+				p.second.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_SUBMIT, &time_submit);
+				p.second.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_START, &time_start);
+				p.second.getProfilingInfo<cl_ulong>(CL_PROFILING_COMMAND_END, &time_end);
+
+				if (t0 == 0)
+					t0 = time_queued;
+
+				float t_queued = (float)((double)(time_queued - t0) / 1000000.0);
+				float t_submit = (float)((double)(time_submit - t0) / 1000000.0);
+				float t_start = (float)((double)(time_start - t0) / 1000000.0);
+				float t_end = (float)((double)(time_end - t0) / 1000000.0);
+
+				float t = t_end - t_start;
+
+				printf("%34s : %7.3f %7.3f %7.3f %7.3f %7.3f ms\n", p.first.c_str(), t_queued, t_submit, t_start, t_end, t);
+				totalMs += t;
+				events.pop();
+			}
+			printf("=================================================================================\n");
+			printf("%34s : %39.3f ms \n", "OpenCL Total runtime", totalMs);
+		}
+		else
+		{
+			while (!events.empty())
+				events.pop();
+		}
+		
+	}
+
+	inline cl::CommandQueue get_cl_queue() { return cl_queue; }
+
+private:
+	cl::CommandQueue cl_queue;
+	std::queue< std::pair<string, cl::Event> > events;
+
+};
+
 class Device {
 private:
 	cl::Context cl_context;
 	cl::Program cl_program;
-	cl::CommandQueue cl_queue;
+	std::unique_ptr<CQueue> queue;
 	bool exists = false;
+	
 	inline string enable_device_capabilities() const { return // enable FP64/FP16 capabilities if available
 		"\n	#ifdef cl_khr_byte_addressable_store"
 		"\n	#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable"
@@ -158,9 +230,9 @@ private:
 public:
 	Device_Info info;
 	inline Device(const Device_Info& info, const string& opencl_c_code=get_opencl_c_code()) {
-		this->info = info;
+ 		this->info = info;
 		cl_context = cl::Context(info.cl_device);
-		cl_queue = cl::CommandQueue(cl_context, info.cl_device, CL_QUEUE_PROFILING_ENABLE); // queue to push commands for the device
+		queue = std::make_unique<CQueue>(cl_context, info.cl_device);
 		cl::Program::Sources cl_source;
 		const string kernel_code = enable_device_capabilities()+"\n"+opencl_c_code;
 		cl_source.push_back({ kernel_code.c_str(), kernel_code.length() });
@@ -182,8 +254,8 @@ public:
 		this->exists = (error == CL_SUCCESS);
 	}
 	inline Device() {} // default constructor
-	inline void finish_queue() {
-		cl_queue.finish();
+	inline void finish_queue(bool log_timings=true) {
+		queue->finish_queue(log_timings);
 	}
 	inline cl::Context get_cl_context() const {
 		return cl_context;
@@ -191,8 +263,8 @@ public:
 	inline cl::Program get_cl_program() const {
 		return cl_program;
 	}
-	inline cl::CommandQueue get_cl_queue() const {
-		return cl_queue;
+	inline CQueue* get_queue() const {
+		return queue.get();
 	}
 	inline bool is_initialized() const {
 		return exists;
@@ -209,7 +281,7 @@ private:
 	T* host_buffer = nullptr; // host buffer
 	cl::Buffer device_buffer; // device buffer
 	Device* device = nullptr; // pointer to linked Device
-	cl::CommandQueue cl_queue; // command queue
+	CQueue* queue; // command queue
 	inline void initialize_auxiliary_pointers() {
 		x = s0 = host_buffer;
 		if(d>0x1u) y = s1 = host_buffer+N;
@@ -230,7 +302,7 @@ private:
 	}
 	inline void allocate_device_buffer(Device& device, const bool allocate_device) {
 		this->device = &device;
-		this->cl_queue = device.get_cl_queue();
+		this->queue = device.get_queue();
 		if(allocate_device) {
 			device.info.memory_used += (uint)(capacity()/1048576ull); // track device memory usage
 			if(device.info.memory_used>device.info.memory) print_error("Device \""+device.info.name+"\" does not have enough memory. Allocating another "+to_string((uint)(capacity()/1048576ull))+" MB would use a total of "+to_string(device.info.memory_used)+" MB / "+to_string(device.info.memory)+" MB.");
@@ -280,7 +352,7 @@ public:
 		N = memory.length(); // copy values/pointers from memory
 		d = memory.dimensions();
 		device = memory.device;
-		cl_queue = memory.device->get_cl_queue();
+		queue = memory.device->get_queue();
 		if(memory.device_buffer_exists) {
 			device_buffer = memory.get_cl_buffer(); // transfer device_buffer pointer
 			device->info.memory_used += (uint)(capacity()/1048576ull); // track device memory usage
@@ -378,21 +450,37 @@ public:
 		return host_buffer[i+(ulong)dimension*N]; // array of structures
 	}
 	inline void read_from_device(const bool blocking=true) {
-		if(host_buffer_exists&&device_buffer_exists) cl_queue.enqueueReadBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer);
+		if (host_buffer_exists && device_buffer_exists)
+		{
+			cl::Event* ev = queue->create_event("Read " + to_string(capacity()) + " bytes");
+			queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
+		}
 	}
 	inline void write_to_device(const bool blocking=true) {
-		if(host_buffer_exists&&device_buffer_exists) cl_queue.enqueueWriteBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer);
+		if (host_buffer_exists && device_buffer_exists)
+		{
+			cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+			queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
+		}
 	}
 	inline void read_from_device(const ulong offset, const ulong length, const bool blocking=true) {
 		if(host_buffer_exists&&device_buffer_exists) {
 			const ulong safe_offset=min(offset, range()), safe_length=min(length, range()-safe_offset);
-			if(safe_length>0ull) cl_queue.enqueueReadBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+			if (safe_length > 0ull)
+			{
+				cl::Event* ev = queue->create_event("Read " + to_string(capacity()) + " bytes");
+				queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, safe_offset * sizeof(T), safe_length * sizeof(T), (void*)(host_buffer + safe_offset), nullptr, ev);
+			}
 		}
 	}
 	inline void write_to_device(const ulong offset, const ulong length, const bool blocking=true) {
 		if(host_buffer_exists&&device_buffer_exists) {
 			const ulong safe_offset=min(offset, range()), safe_length=min(length, range()-safe_offset);
-			if(safe_length>0ull) cl_queue.enqueueWriteBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+			if(safe_length>0ull) 
+			{
+				cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+				queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+			}
 		}
 	}
 	inline void read_from_device_1d(const ulong x0, const ulong x1, const int dimension=-1, const bool blocking=true) { // read 1D domain from device, either for all vector dimensions (-1) or for a specified dimension
@@ -400,9 +488,12 @@ public:
 			const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 			for(uint i=i0; i<i1; i++) {
 				const ulong safe_offset=min((ulong)i*N+x0, range()), safe_length=min(x1-x0, range()-safe_offset);
-				if(safe_length>0ull) cl_queue.enqueueReadBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+				if(safe_length>0ull)
+				{
+					cl::Event* ev = queue->create_event("Read " + to_string(capacity()) + " bytes");
+					queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void write_to_device_1d(const ulong x0, const ulong x1, const int dimension=-1, const bool blocking=true) { // write 1D domain to device, either for all vector dimensions (-1) or for a specified dimension
@@ -410,9 +501,12 @@ public:
 			const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 			for(uint i=i0; i<i1; i++) {
 				const ulong safe_offset=min((ulong)i*N+x0, range()), safe_length=min(x1-x0, range()-safe_offset);
-				if(safe_length>0ull) cl_queue.enqueueWriteBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+				if(safe_length>0ull)
+				{
+					cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+					queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void read_from_device_2d(const ulong x0, const ulong x1, const ulong y0, const ulong y1, const ulong Nx, const ulong Ny, const int dimension=-1, const bool blocking=true) { // read 2D domain from device, either for all vector dimensions (-1) or for a specified dimension
@@ -422,10 +516,13 @@ public:
 				const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 				for(uint i=i0; i<i1; i++) {
 					const ulong safe_offset=min((ulong)i*N+n, range()), safe_length=min(x1-x0, range()-safe_offset);
-					if(safe_length>0ull) cl_queue.enqueueReadBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+					if(safe_length>0ull) 
+					{
+						cl::Event* ev = queue->create_event("Read " + to_string(capacity()) + " bytes");
+						queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+					}
 				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void write_to_device_2d(const ulong x0, const ulong x1, const ulong y0, const ulong y1, const ulong Nx, const ulong Ny, const int dimension=-1, const bool blocking=true) { // write 2D domain to device, either for all vector dimensions (-1) or for a specified dimension
@@ -435,10 +532,13 @@ public:
 				const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 				for(uint i=i0; i<i1; i++) {
 					const ulong safe_offset=min((ulong)i*N+n, range()), safe_length=min(x1-x0, range()-safe_offset);
-					if(safe_length>0ull) cl_queue.enqueueWriteBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+					if(safe_length>0ull)
+					{
+						cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+						queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+					}
 				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void read_from_device_3d(const ulong x0, const ulong x1, const ulong y0, const ulong y1, const ulong z0, const ulong z1, const ulong Nx, const ulong Ny, const ulong Nz, const int dimension=-1, const bool blocking=true) { // read 3D domain from device, either for all vector dimensions (-1) or for a specified dimension
@@ -449,11 +549,14 @@ public:
 					const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 					for(uint i=i0; i<i1; i++) {
 						const ulong safe_offset=min((ulong)i*N+n, range()), safe_length=min(x1-x0, range()-safe_offset);
-						if(safe_length>0ull) cl_queue.enqueueReadBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+						if(safe_length>0ull)
+						{
+							cl::Event* ev = queue->create_event("Read " + to_string(capacity()) + " bytes");
+							queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+						}
 					}
 				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void write_to_device_3d(const ulong x0, const ulong x1, const ulong y0, const ulong y1, const ulong z0, const ulong z1, const ulong Nx, const ulong Ny, const ulong Nz, const int dimension=-1, const bool blocking=true) { // write 3D domain to device, either for all vector dimensions (-1) or for a specified dimension
@@ -464,11 +567,14 @@ public:
 					const uint i0=(uint)max(0, dimension), i1=dimension<0 ? d : i0+1u;
 					for(uint i=i0; i<i1; i++) {
 						const ulong safe_offset=min((ulong)i*N+n, range()), safe_length=min(x1-x0, range()-safe_offset);
-						if(safe_length>0ull) cl_queue.enqueueWriteBuffer(device_buffer, false, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset));
+						if(safe_length>0ull)
+						{
+							cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+							queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, safe_offset*sizeof(T), safe_length*sizeof(T), (void*)(host_buffer+safe_offset), nullptr, ev);
+						}
 					}
 				}
 			}
-			if(blocking) cl_queue.finish();
 		}
 	}
 	inline void enqueue_read_from_device() {
@@ -490,7 +596,7 @@ private:
 	uint number_of_parameters = 0u;
 	cl::Kernel cl_kernel;
 	cl::NDRange cl_range_global, cl_range_local;
-	cl::CommandQueue cl_queue;
+	CQueue* queue;
 	string kernel_name;
 	template<typename T> inline void link_parameter(const uint position, const Memory<T>& memory) {
 		cl_kernel.setArg(position, memory.get_cl_buffer());
@@ -520,7 +626,7 @@ public:
 		kernel_name = name;
 		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
 		initialize_ranges(N);
-		cl_queue = device.get_cl_queue();
+		queue = device.get_queue();
 	}
 	template<class... T> inline Kernel(const Device& device, const ulong N, const uint workgroup_size, const string& name, const T&... parameters) { // accepts Memory<T> objects and fundamental data type constants
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
@@ -528,7 +634,7 @@ public:
 		kernel_name = name;
 		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
 		initialize_ranges(N, (ulong)workgroup_size);
-		cl_queue = device.get_cl_queue();
+		queue = device.get_queue();
 	}
 	template<class... T> inline Kernel(const Device& device, const ulong Nx, const ulong Ny, const ulong wg_size_x, const ulong wg_size_y, const string& name, const T&... parameters) { // accepts Memory<T> objects and fundamental data type constants
 		if (!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
@@ -536,7 +642,7 @@ public:
 		kernel_name = name;
 		link_parameters(number_of_parameters, parameters...); // expand variadic template to link kernel parameters
 		initialize_ranges_2D(Nx, Ny, wg_size_x, wg_size_y);
-		cl_queue = device.get_cl_queue();
+		queue = device.get_queue();
 	}
 	inline Kernel() {} // default constructor
 	inline uint get_number_of_parameters() const {
@@ -552,12 +658,13 @@ public:
 	}
 	inline Kernel& enqueue_run(const uint t=1u) {
 		for(uint i=0u; i<t; i++) {
-			cl_queue.enqueueNDRangeKernel(cl_kernel, cl::NullRange, cl_range_global, cl_range_local);
+			cl::Event* ev = queue->create_event(kernel_name);
+			queue->get_cl_queue().enqueueNDRangeKernel(cl_kernel, cl::NullRange, cl_range_global, cl_range_local, nullptr, ev);
 		}
 		return *this;
 	}
 	inline Kernel& finish_queue() {
-		cl_queue.finish();
+		queue->finish_queue();
 		return *this;
 	}
 	inline Kernel& run(const uint t=1u) {
