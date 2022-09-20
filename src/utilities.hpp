@@ -601,7 +601,7 @@ inline void print_message(const string& message, const string& keyword="") { // 
 inline void print_error(const string& s) { // print formatted error message
 	print_message(s, "Error: ");
 #ifdef _WIN32
-	print_message("Press Enter to exit.", "       ");
+	print_message("Press Enter to continue.", "       ");
 #endif // _WIN32
 	string b = "";
 	for(int i=0; i<CONSOLE_WIDTH-2; i++) b += "-";
@@ -609,7 +609,7 @@ inline void print_error(const string& s) { // print formatted error message
 #ifdef _WIN32
 	wait();
 #endif //_WIN32
-	exit(1);
+	//exit(1);
 }
 inline void print_warning(const string& s) { // print formatted warning message
 	print_message(s, "Warning: ");

@@ -179,7 +179,7 @@ public:
 #ifdef PTX // generate assembly (ptx) file for OpenCL code
 		write_file("bin/kernel.ptx", cl_program.getInfo<CL_PROGRAM_BINARIES>()[0]); // save binary (ptx file)
 #endif // PTX
-		this->exists = true;
+		this->exists = (error == CL_SUCCESS);
 	}
 	inline Device() {} // default constructor
 	inline void finish_queue() {
