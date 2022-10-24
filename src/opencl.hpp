@@ -67,7 +67,6 @@ struct Device_Info {
 	inline Device_Info() {}; // default constructor
 };
 
-string get_opencl_c_code(); // implemented in kernel.hpp
 inline void print_device_info(const Device_Info& d, const int id=-1) { // print OpenCL device info
 	println("\r|----------------.------------------------------------------------------------|");
 	if(id>-1) println("| Device ID      | "+alignl(58, to_string(id))+" |");
@@ -229,7 +228,7 @@ private:
 	;}
 public:
 	Device_Info info;
-	inline Device(const Device_Info& info, const string& opencl_c_code=get_opencl_c_code()) {
+	inline Device(const Device_Info& info, const string& opencl_c_code) {
  		this->info = info;
 		cl_context = cl::Context(info.cl_device);
 		queue = std::make_unique<CQueue>(cl_context, info.cl_device);
