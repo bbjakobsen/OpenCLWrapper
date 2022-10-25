@@ -299,15 +299,15 @@ private:
 		if(d>0xEu) sE = host_buffer+N*0xEull;
 		if(d>0xFu) sF = host_buffer+N*0xFull;
 	}
-	inline void allocate_device_buffer(Device& device, const bool allocate_device) {
-		this->device = &device;
-		this->queue = device.get_queue();
+	inline void allocate_device_buffer(Device& dev, const bool allocate_device) {
+		this->device = &dev;
+		this->queue = dev.get_queue();
 		if(allocate_device) {
-			device.info.memory_used += (uint)(capacity()/1048576ull); // track device memory usage
-			if(device.info.memory_used>device.info.memory) print_error("Device \""+device.info.name+"\" does not have enough memory. Allocating another "+to_string((uint)(capacity()/1048576ull))+" MB would use a total of "+to_string(device.info.memory_used)+" MB / "+to_string(device.info.memory)+" MB.");
+			dev.info.memory_used += (uint)(capacity()/1048576ull); // track device memory usage
+			if(dev.info.memory_used>dev.info.memory) print_error("Device \""+dev.info.name+"\" does not have enough memory. Allocating another "+to_string((uint)(capacity()/1048576ull))+" MB would use a total of "+to_string(dev.info.memory_used)+" MB / "+to_string(dev.info.memory)+" MB.");
 			int error = 0;
-			device_buffer = cl::Buffer(device.get_cl_context(), CL_MEM_READ_WRITE, capacity(), nullptr, &error);
-			if(error==-61) print_error("Memory size is too large at "+to_string((uint)(capacity()/1048576ull))+" MB. Device \""+device.info.name+"\" accepts a maximum buffer size of "+to_string(device.info.max_global_buffer)+" MB.");
+			device_buffer = cl::Buffer(dev.get_cl_context(), CL_MEM_READ_WRITE, capacity(), nullptr, &error);
+			if(error==-61) print_error("Memory size is too large at "+to_string((uint)(capacity()/1048576ull))+" MB. Device \""+dev.info.name+"\" accepts a maximum buffer size of "+to_string(dev.info.max_global_buffer)+" MB.");
 			else if(error) print_error("Device buffer allocation failed with error code "+to_string(error)+".");
 			device_buffer_exists = true;
 		}
