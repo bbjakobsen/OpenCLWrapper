@@ -299,14 +299,14 @@ private:
 		if(d>0xEu) sE = host_buffer+N*0xEull;
 		if(d>0xFu) sF = host_buffer+N*0xFull;
 	}
-	inline void allocate_device_buffer(Device& dev, const bool allocate_device) {
+	inline void allocate_device_buffer(Device& dev, const bool allocate_device, cl_mem_flags flag=CL_MEM_READ_WRITE) {
 		this->device = &dev;
 		this->queue = dev.get_queue();
 		if(allocate_device) {
 			dev.info.memory_used += (uint)(capacity()/1048576ull); // track device memory usage
 			if(dev.info.memory_used>dev.info.memory) print_error("Device \""+dev.info.name+"\" does not have enough memory. Allocating another "+to_string((uint)(capacity()/1048576ull))+" MB would use a total of "+to_string(dev.info.memory_used)+" MB / "+to_string(dev.info.memory)+" MB.");
 			int error = 0;
-			device_buffer = cl::Buffer(dev.get_cl_context(), CL_MEM_READ_WRITE, capacity(), nullptr, &error);
+			device_buffer = cl::Buffer(dev.get_cl_context(), flag, capacity(), nullptr, &error);
 			if(error==-61) print_error("Memory size is too large at "+to_string((uint)(capacity()/1048576ull))+" MB. Device \""+dev.info.name+"\" accepts a maximum buffer size of "+to_string(dev.info.max_global_buffer)+" MB.");
 			else if(error) print_error("Device buffer allocation failed with error code "+to_string(error)+".");
 			device_buffer_exists = true;
@@ -315,12 +315,12 @@ private:
 public:
 	T *x=nullptr, *y=nullptr, *z=nullptr, *w=nullptr; // host buffer auxiliary pointers for multi-dimensional array access (array of structures)
 	T *s0=nullptr, *s1=nullptr, *s2=nullptr, *s3=nullptr, *s4=nullptr, *s5=nullptr, *s6=nullptr, *s7=nullptr, *s8=nullptr, *s9=nullptr, *sA=nullptr, *sB=nullptr, *sC=nullptr, *sD=nullptr, *sE=nullptr, *sF=nullptr;
-	inline Memory(Device& device, const ulong N, const uint dimensions=1u, const bool allocate_host=true, const bool allocate_device=true, const T value=(T)0) {
+	inline Memory(Device& device, const ulong N, const uint dimensions=1u, const bool allocate_host=true, const bool allocate_device=true, const T value=(T)0, cl_mem_flags flag = CL_MEM_READ_WRITE) {
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
 		if(N*(ulong)dimensions==0ull) print_error("Memory size must be larger than 0.");
 		this->N = N;
 		this->d = dimensions;
-		allocate_device_buffer(device, allocate_device);
+		allocate_device_buffer(device, allocate_device, flag);
 		if(allocate_host) {
 			host_buffer = new T[N*(ulong)d];
 			for(ulong i=0ull; i<N*(ulong)d; i++) host_buffer[i] = value;
@@ -329,12 +329,12 @@ public:
 		}
 		write_to_device();
 	}
-	inline Memory(Device& device, const ulong N, const uint dimensions, T* const host_buffer, const bool allocate_device=true, const bool write_to_device_=false) {
+	inline Memory(Device& device, const ulong N, const uint dimensions, T* const host_buffer, const bool allocate_device=true, const bool write_to_device_=false, cl_mem_flags flag = CL_MEM_READ_WRITE) {
 		if(!device.is_initialized()) print_error("No Device selected. Call Device constructor.");
 		if(N*(ulong)dimensions==0ull) print_error("Memory size must be larger than 0.");
 		this->N = N;
 		this->d = dimensions;
-		allocate_device_buffer(device, allocate_device);
+		allocate_device_buffer(device, allocate_device, flag);
 		this->host_buffer = host_buffer;
 		initialize_auxiliary_pointers();
 		host_buffer_exists = true;
@@ -455,6 +455,36 @@ public:
 			queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
 		}
 	}
+
+	inline void* enqueue_map(cl_mem_flags flag, bool blocking = true) {
+		void* ptr = NULL;
+		if (device_buffer_exists)
+		{
+			std::string n = (flag == CL_MAP_READ ? "read " : "write ");
+			cl::Event* ev = queue->create_event("Map for " + n + to_string(capacity()) + " bytes");
+			ptr = queue->get_cl_queue().enqueueMapBuffer(device_buffer, blocking, flag, 0, capacity(), nullptr, ev);
+		}
+		return ptr;
+	}
+
+	inline void* enqueue_map_read_from_device(bool blocking = true)
+	{
+		return enqueue_map(CL_MAP_READ, blocking);
+	}
+	inline void* enqueue_map_write_to_device(bool blocking = true)
+	{
+		return enqueue_map(CL_MAP_WRITE, blocking);
+	}
+
+	inline void enqueue_unmap_ptr(void* ptr) {
+		if (device_buffer_exists)
+		{
+			cl::Event* ev = queue->create_event("Unmap " + to_string(capacity()) + " bytes");
+			queue->get_cl_queue().enqueueUnmapMemObject(device_buffer, ptr, nullptr, ev);
+		}
+	}
+
+
 	inline void write_to_device(const bool blocking=true) {
 		if (host_buffer_exists && device_buffer_exists)
 		{
@@ -582,9 +612,9 @@ public:
 	inline void enqueue_write_to_device() {
 		write_to_device(false);
 	}
-	inline void finish_queue() {
-		cl_queue.finish();
-	}
+	//inline void finish_queue() {
+	//	cl_queue.finish();
+	//}
 	inline const cl::Buffer& get_cl_buffer() const {
 		return device_buffer;
 	}
