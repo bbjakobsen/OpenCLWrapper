@@ -12,6 +12,8 @@
 #endif // USE_OPENCL_1_1
 #ifndef _WIN32
 #pragma GCC diagnostic ignored "-Wignored-attributes" // ignore compiler warnings for CL/cl.hpp with g++
+#else
+#define LOGD printf
 #endif // _WIN32
 #define CL_HPP_TARGET_OPENCL_VERSION 200
 #include <CL/cl.hpp> // OpenCL 1.0, 1.1, 1.2
@@ -157,7 +159,7 @@ public:
 		{
 			cl_ulong t0 = 0;
 			float totalMs = 0.0f;
-			printf("%34s : %7s %7s %7s %7s %7s ms\n", "Job name ", "queued", "submit", "start", "end", "run");
+			LOGD("%34s : %7s %7s %7s %7s %7s ms\n", "Job name ", "queued", "submit", "start", "end", "run");
 
 			while (!events.empty())
 			{
@@ -183,12 +185,12 @@ public:
 
 				float t = t_end - t_start;
 
-				printf("%34s : %7.3f %7.3f %7.3f %7.3f %7.3f ms\n", p.first.c_str(), t_queued, t_submit, t_start, t_end, t);
+				LOGD("%34s : %7.3f %7.3f %7.3f %7.3f %7.3f ms\n", p.first.c_str(), t_queued, t_submit, t_start, t_end, t);
 				totalMs += t;
 				events.pop();
 			}
-			printf("=================================================================================\n");
-			printf("%34s : %39.3f ms \n", "OpenCL Total runtime", totalMs);
+			LOGD("=================================================================================\n");
+			LOGD("%34s : %39.3f ms \n", "OpenCL Total runtime", totalMs);
 		}
 		else
 		{
@@ -201,7 +203,7 @@ public:
 	inline cl::CommandQueue get_cl_queue() { return cl_queue; }
 
 private:
-	cl::CommandQueue cl_queue;
+	cl::CommandQueue cl_queue = cl::CommandQueue();
 	std::queue< std::pair<string, cl::Event> > events;
 
 };
@@ -217,21 +219,12 @@ private:
 		"\n	#ifdef cl_khr_byte_addressable_store"
 		"\n	#pragma OPENCL EXTENSION cl_khr_byte_addressable_store : enable"
 		"\n	#endif"
-		"\n	#ifdef cl_khr_fp64"
-		"\n	#pragma OPENCL EXTENSION cl_khr_fp64 : enable" // make sure cl_khr_fp64 extension is enabled
-		"\n	#endif"
-		"\n	#ifdef cl_khr_fp16"
-		"\n	#pragma OPENCL EXTENSION cl_khr_fp16 : enable" // make sure cl_khr_fp16 extension is enabled
-		"\n	#endif"
-		"\n	#ifdef cl_khr_int64_base_atomics"
-		"\n	#pragma OPENCL EXTENSION cl_khr_int64_base_atomics : enable" // make sure cl_khr_int64_base_atomics extension is enabled
-		"\n	#endif"
 	;}
 public:
 	Device_Info info;
 	inline Device(const Device_Info& info, const string& opencl_c_code) {
  		this->info = info;
-		cl_context = cl::Context(info.cl_device);
+		cl_context = cl::Context((const cl::Device&)info.cl_device, NULL);
 		queue = std::make_unique<CQueue>(cl_context, info.cl_device);
 		cl::Program::Sources cl_source;
 		const string kernel_code = enable_device_capabilities()+"\n"+opencl_c_code;
@@ -456,25 +449,32 @@ public:
 			queue->get_cl_queue().enqueueReadBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
 		}
 	}
-
-	inline void* enqueue_map(cl_mem_flags flag, bool blocking = true) {
+	inline void* enqueue_map_read_from_device(const bool blocking=true) {
 		void* ptr = NULL;
-		if (device_buffer_exists)
+		if (host_buffer_exists && device_buffer_exists)
 		{
-			std::string n = (flag == CL_MAP_READ ? "read " : "write ");
-			cl::Event* ev = queue->create_event("Map for " + n + to_string(capacity()) + " bytes");
-			ptr = queue->get_cl_queue().enqueueMapBuffer(device_buffer, blocking, flag, 0, capacity(), nullptr, ev);
+			cl::Event* ev = queue->create_event("Map for read " + to_string(capacity()) + " bytes");
+			ptr = queue->get_cl_queue().enqueueMapBuffer(device_buffer, blocking, CL_MAP_READ, 0, capacity(),nullptr, ev);
 		}
 		return ptr;
 	}
 
-	inline void* enqueue_map_read_from_device(bool blocking = true)
-	{
-		return enqueue_map(CL_MAP_READ, blocking);
+	inline void write_to_device(const bool blocking=true) {
+		if (host_buffer_exists && device_buffer_exists)
+		{
+			cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
+			queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
+		}
 	}
-	inline void* enqueue_map_write_to_device(bool blocking = true)
-	{
-		return enqueue_map(CL_MAP_WRITE, blocking);
+
+	inline void* enqueue_map_write_to_device(const bool blocking=true) {
+		void* ptr = NULL;
+		if (device_buffer_exists)
+		{
+			cl::Event* ev = queue->create_event("Map for write " + to_string(capacity()) + " bytes");
+			ptr = queue->get_cl_queue().enqueueMapBuffer(device_buffer, blocking, CL_MAP_WRITE, 0, capacity(),nullptr, ev);
+		}
+		return ptr;
 	}
 
 	inline void enqueue_unmap_ptr(void* ptr) {
@@ -485,14 +485,6 @@ public:
 		}
 	}
 
-
-	inline void write_to_device(const bool blocking=true) {
-		if (host_buffer_exists && device_buffer_exists)
-		{
-			cl::Event* ev = queue->create_event("Write " + to_string(capacity()) + " bytes");
-			queue->get_cl_queue().enqueueWriteBuffer(device_buffer, blocking, 0u, capacity(), (void*)host_buffer, nullptr, ev);
-		}
-	}
 	inline void read_from_device(const ulong offset, const ulong length, const bool blocking=true) {
 		if(host_buffer_exists&&device_buffer_exists) {
 			const ulong safe_offset=min(offset, range()), safe_length=min(length, range()-safe_offset);
@@ -613,9 +605,7 @@ public:
 	inline void enqueue_write_to_device() {
 		write_to_device(false);
 	}
-	//inline void finish_queue() {
-	//	cl_queue.finish();
-	//}
+
 	inline const cl::Buffer& get_cl_buffer() const {
 		return device_buffer;
 	}
