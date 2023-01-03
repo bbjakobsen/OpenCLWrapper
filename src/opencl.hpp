@@ -34,6 +34,9 @@ struct Device_Info {
 	uint is_fp64_capable=0u, is_fp32_capable=0u, is_fp16_capable=0u, is_int64_capable=0u, is_int32_capable=0u, is_int16_capable=0u, is_int8_capable=0u;
 	uint cores=0u; // for CPUs, compute_units is the number of threads (twice the number of cores with hyperthreading)
 	float tflops=0.0f; // estimated device FP32 floating point performance in TeraFLOPs/s
+	bool has_svm_coarsegrained_buffer = false;
+	bool has_svm_finegrained_buffer = false;
+	bool has_svm_finegrained_system = false;
 	inline Device_Info(const cl::Device& cl_device) {
 		this->cl_device = cl_device; // see https://www.khronos.org/registry/OpenCL/sdk/1.2/docs/man/xhtml/clGetDeviceInfo.html
 		name = trim(cl_device.getInfo<CL_DEVICE_NAME>()); // device name
@@ -66,11 +69,44 @@ struct Device_Info {
 		const float arm = (float)(contains(to_lower(vendor), "arm"))*(is_gpu?8.0f:1.0f); // ARM GPUs usually have 8 cores/CU, ARM CPUs have 1 core/CU
 		cores = to_uint((float)compute_units*(nvidia+amd+intel+arm)); // for CPUs, compute_units is the number of threads (twice the number of cores with hyperthreading)
 		tflops = 1E-6f*(float)cores*(float)ipc*(float)clock_frequency; // estimated device floating point performance in TeraFLOPs/s
+
+		cl_device_svm_capabilities caps = cl_device.getInfo<CL_DEVICE_SVM_CAPABILITIES>();
+		has_svm_coarsegrained_buffer = (caps & CL_DEVICE_SVM_COARSE_GRAIN_BUFFER);
+		has_svm_finegrained_buffer = (caps & CL_DEVICE_SVM_FINE_GRAIN_BUFFER);
+		has_svm_finegrained_system = (caps & CL_DEVICE_SVM_FINE_GRAIN_SYSTEM);
+		//	Fine - grained buffer with atomics	 (caps & CL_DEVICE_SVM_FINE_GRAIN_BUFFER) && (caps & CL_DEVICE_SVM_ATOMICS)
+		//	Fine - grained system	(caps & CL_DEVICE_SVM_FINE_GRAIN_SYSTEM)
+		//	Fine - grained system with atomics	(caps & CL_DEVICE_SVM_FINE_GRAIN_SYSTEM) && (caps & CL_DEVICE_SVM_ATOMICS)
+		
+#if 0
+		if (has_svm_coarsegrained)
+		{
+			const size_t numElements = 32;
+
+			auto anSVMInt = cl::allocate_svm<int, cl::SVMTraitCoarse<>>();
+			*anSVMInt = 5;
+			//cl::SVMAllocator<Foo, cl::SVMTraitCoarse<cl::SVMTraitReadOnly<>>> svmAllocReadOnly;
+			//auto fooPointer = cl::allocate_pointer<Foo>(svmAllocReadOnly);
+			//fooPointer->bar = anSVMInt.get();
+			cl::SVMAllocator<int, cl::SVMTraitCoarse<>> svmAlloc;
+			std::vector<int, cl::SVMAllocator<int, cl::SVMTraitCoarse<>>> inputA(numElements, 1, svmAlloc);
+			cl::coarse_svm_vector<int> inputB(numElements, 2);
+		}
+#endif
+		println("\r|----------------.------------------------------------------------------------|");
+
+
 	}
 	inline Device_Info() {}; // default constructor
 };
 
 inline void print_device_info(const Device_Info& d, const int id=-1) { // print OpenCL device info
+	
+	string caps = "0";
+	if (d.has_svm_coarsegrained_buffer) caps = caps + " | SVM_COARSE_GRAIN_BUFFER";
+	if (d.has_svm_finegrained_buffer) caps = caps + " | SVM_FINE_GRAIN_BUFFER";
+	if (d.has_svm_finegrained_system) caps = caps + " | SVM_FINE_GRAIN_SYSTEM";
+
 	println("\r|----------------.------------------------------------------------------------|");
 	if(id>-1) println("| Device ID      | "+alignl(58, to_string(id))+" |");
 	println("| Device Name    | "+alignl(58, d.name                 )+" |");
@@ -80,6 +116,7 @@ inline void print_device_info(const Device_Info& d, const int id=-1) { // print 
 	println("| Compute Units  | "+alignl(58, to_string(d.compute_units)+" at "+to_string(d.clock_frequency)+" MHz ("+to_string(d.cores)+" cores, "+to_string(d.tflops, 3)+" TFLOPs/s)")+" |");
 	println("| Memory, Cache  | "+alignl(58, to_string(d.memory)+" MB, "+to_string(d.global_cache)+" KB global / "+to_string(d.local_cache)+" KB local")+" |");
 	println("| Buffer Limits  | "+alignl(58, to_string(d.max_global_buffer)+" MB global, "+to_string(d.max_constant_buffer)+" KB constant")+" |");
+	println("| SVM capability | "+alignl(58, caps) + " |");
 	println("|----------------'------------------------------------------------------------|");
 }
 inline vector<Device_Info> get_devices() { // returns a vector of all available OpenCL devices
@@ -262,6 +299,15 @@ public:
 	inline bool is_initialized() const {
 		return exists;
 	}
+};
+
+
+class SVMMemory {
+public:
+	SVMMemory() {}
+	SVMMemory(void* p) { ptr = p; }
+
+	void* ptr = nullptr;
 };
 
 template<typename T> class Memory {
@@ -618,11 +664,24 @@ private:
 	cl::NDRange cl_range_global, cl_range_local;
 	CQueue* queue;
 	string kernel_name;
-	template<typename T> inline void link_parameter(const uint position, const Memory<T>& memory) {
-		cl_kernel.setArg(position, memory.get_cl_buffer());
+	template<typename T> void link_parameter(const uint position, const Memory<T>& memory) {
+		int res = cl_kernel.setArg(position, memory.get_cl_buffer());
+		if (res != CL_SUCCESS)
+			printf("mem arg %d res:%d\n", (int)position, res);
 	}
-	template<typename T> inline void link_parameter(const uint position, const T& constant) {
-		cl_kernel.setArg(position, sizeof(T), (void*)&constant);
+
+	void link_parameter(const uint position, const SVMMemory& memory) 
+	{
+		int res = cl_kernel.setArg(position, memory.ptr);
+		if (res != CL_SUCCESS)
+			printf("svm arg %d res:%d\n", (int)position, res);
+	}
+
+	template<typename T> void link_parameter(const uint position, const T& constant)
+	{
+		int res = cl_kernel.setArg(position, sizeof(T), (void*)&constant);
+		if (res != CL_SUCCESS)
+			printf("pod arg %d res:%d\n", (int)position, res);
 	}
 	inline void link_parameters(const uint starting_position) {
 		number_of_parameters = max(number_of_parameters, starting_position);
