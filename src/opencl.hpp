@@ -667,21 +667,21 @@ private:
 	template<typename T> void link_parameter(const uint position, const Memory<T>& memory) {
 		int res = cl_kernel.setArg(position, memory.get_cl_buffer());
 		if (res != CL_SUCCESS)
-			printf("mem arg %d res:%d\n", (int)position, res);
+			printf("[%s] mem arg %d res:%d\n", kernel_name.c_str(), (int)position, res);
 	}
 
 	void link_parameter(const uint position, const SVMMemory& memory) 
 	{
 		int res = cl_kernel.setArg(position, memory.ptr);
 		if (res != CL_SUCCESS)
-			printf("svm arg %d res:%d\n", (int)position, res);
+			printf("[%s] svm arg %d res:%d\n", kernel_name.c_str(), (int)position, res);
 	}
 
 	template<typename T> void link_parameter(const uint position, const T& constant)
 	{
 		int res = cl_kernel.setArg(position, sizeof(T), (void*)&constant);
 		if (res != CL_SUCCESS)
-			printf("pod arg %d res:%d\n", (int)position, res);
+			printf("[%s] pod arg %d res:%d\n", kernel_name.c_str(), (int)position, res);
 	}
 	inline void link_parameters(const uint starting_position) {
 		number_of_parameters = max(number_of_parameters, starting_position);
