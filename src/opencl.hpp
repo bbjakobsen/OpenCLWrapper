@@ -259,10 +259,20 @@ private:
 	;}
 public:
 	Device_Info info;
-	inline Device(const Device_Info& info, const string& opencl_c_code) {
- 		this->info = info;
+	inline Device(const Device_Info& info) {
+		this->info = info;
 		cl_context = cl::Context((const cl::Device&)info.cl_device, NULL);
 		queue = std::make_unique<CQueue>(cl_context, info.cl_device);
+	}
+
+	void AddProgram(const string& opencl_c_code) {
+
+		if (exists)
+		{
+			print_error("Attempting to add multiple programs to a device. This is not yet supported");
+			return;
+			// if (!program.is_initialized()) print_error("[" + name + "] has failed build.");
+		}
 		cl::Program::Sources cl_source;
 		const string kernel_code = enable_device_capabilities()+"\n"+opencl_c_code;
 		cl_source.push_back({ kernel_code.c_str(), kernel_code.length() });
