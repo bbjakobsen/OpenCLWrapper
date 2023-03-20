@@ -30,7 +30,6 @@ typedef unsigned int uint;
 typedef int64_t slong;
 typedef uint64_t ulong;
 #define pif 3.1415927f
-#define pi 3.141592653589793
 #define min_char ((char)-128)
 #define max_char ((char)127)
 #define max_uchar ((uchar)255)
@@ -86,7 +85,7 @@ inline ushort float_to_half(const float x) { // IEEE-754 16-bit floating-point f
 	const uint b = as_uint(x)+0x00001000; // round-to-nearest-even: add last bit after truncated mantissa
 	const uint e = (b&0x7F800000)>>23; // exponent
 	const uint m = b&0x007FFFFF; // mantissa; in line below: 0x007FF000 = 0x00800000-0x00001000 = decimal indicator flag - initial rounding
-	return (b&0x80000000)>>16 | (e>112)*((((e-112)<<10)&0x7C00)|m>>13) | ((e<113)&(e>101))*((((0x007FF000+m)>>(125-e))+1)>>1) | (e>143)*0x7FFF; // sign : normalized : denormalized : saturate
+	return (ushort)((b&0x80000000)>>16 | (e>112)*((((e-112)<<10)&0x7C00)|m>>13) | ((e<113)&(e>101))*((((0x007FF000+m)>>(125-e))+1)>>1) | (e>143)*0x7FFF); // sign : normalized : denormalized : saturate
 }
 
 inline float sq(const float x) {
@@ -699,8 +698,8 @@ inline vector<string> find_files(const string& path, const string& extension=".*
 }
 #endif // UTILITIES_NO_CPP17
 inline void create_folder(const string& path) { // create folder if it not already exists
-	const int slash_position = (int)path.rfind('/'); // find last slash dividing the path from the filename
-	if(slash_position==(int)string::npos) return; // no slash found
+	const size_t slash_position = path.rfind('/'); // find last slash dividing the path from the filename
+	if(slash_position==string::npos) return; // no slash found
 	const string f = path.substr(0, slash_position); // cut off file name if there is any
 #ifndef UTILITIES_NO_CPP17
 	if(!std::filesystem::is_directory(f)||!std::filesystem::exists(f)) std::filesystem::create_directories(f); // create folder if it not already exists
