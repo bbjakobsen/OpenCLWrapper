@@ -164,6 +164,20 @@ inline Device_Info select_device_with_most_memory(const vector<Device_Info>& dev
 	print_device_info(devices[best_i], best_i);
 	return devices[best_i];
 }
+
+inline Device_Info select_device_with_most_svm_memory(const vector<Device_Info>& devices = get_devices()) { // returns device with largest memory capacity
+	uint best_value = 0u;
+	uint best_i = 0u;
+	for (uint i = 0u; i < (uint)devices.size(); i++) { // find device with most memory
+		if (devices[i].has_svm_finegrained_buffer && devices[i].memory > best_value) {
+			best_value = devices[i].memory;
+			best_i = i;
+		}
+	}
+	print_device_info(devices[best_i], best_i);
+	return devices[best_i];
+}
+
 inline Device_Info select_device_with_id(const uint id, const vector<Device_Info>& devices=get_devices()) { // returns device with specified ID
 	if(id<(uint)devices.size()) {
 		print_device_info(devices[id], id);
@@ -294,6 +308,10 @@ public:
 		this->exists = (error == CL_SUCCESS);
 	}
 	inline Device() {} // default constructor
+	~Device()
+	{
+		print_info("Device::~Device");
+	}
 	inline void finish_queue(bool log_timings=true) {
 		queue->finish_queue(log_timings);
 	}
