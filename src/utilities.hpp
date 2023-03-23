@@ -5,6 +5,10 @@
 #define CONSOLE_WIDTH 79
 #define UTILITIES_NO_CPP17
 
+#if defined(__ANDROID__) || defined(ANDROID)
+#include <cl_stub.h>
+#endif
+
 #pragma warning(disable:26451)
 #pragma warning(disable:6386)
 #include <cmath>
@@ -537,7 +541,11 @@ inline void print(const string& s="") {
 	std::cout << s;
 }
 inline void println(const string& s="") {
-	std::cout << s+'\n';
+#if defined(__ANDROID__) || defined(ANDROID)
+	LOGI(s.c_str());
+#else
+    std::cout << s+'\n';
+#endif
 }
 inline void reprint(const string& s="") {
 	std::cout << "\r"+s;
