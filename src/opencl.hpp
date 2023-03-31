@@ -763,6 +763,12 @@ public:
 		link_parameters(starting_position, parameters...); // expand variadic template to link kernel parameters
 		return *this;
 	}
+
+	cl_int setSVMPointers(const vector<void*>& pointerList)
+	{
+		return cl_kernel.setSVMPointers(pointerList);
+	}
+
 	inline Kernel& enqueue_run(const uint t=1u) {
 		for(uint i=0u; i<t; i++) {
 			cl::Event* ev = queue->create_event(kernel_name);
